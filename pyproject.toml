@@ -1,0 +1,13 @@
+[project]
+name = "gce_metadata_server"
+description = "Enable access of GCE metadata from outside of VM instances"
+version = "0.0.1"
+authors = [
+  {name = "Aurora Long", email = "aurora-long@proton.me"}
+]
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "flask",
+  "google-cloud-compute",
+]
