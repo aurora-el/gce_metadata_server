@@ -1,19 +1,42 @@
 from os import environ
 from ipaddress import ip_network
 from google.cloud import compute_v1
+import google.auth
+from google.auth import impersonated_credentials
 from directory import Directory
+
 
 class Config:
     def __init__(self):
         self.INSTANCE_NAME = environ.get('GCE_INSTANCE')
         self.PROJECT_NAME = environ.get('GCE_PROJECT')
         self.ZONE = environ.get('GCE_ZONE')
+        self.SOURCE_CREDENTIALS = google.auth.default()
+        self.CREDENTIALS = {}
+
         self.get_project()
         self.get_instance()
 
     APPLICATION_ROOT = '/computeMetadata/v1/'
 
     PROJECT = {}
+
+    def get_token(self, email, scopes):
+        try:
+            if self.CREDENTIALS[email].valid:
+                return self.CREDENTIALS[email].token
+            else:
+                self.CREDENTIALS[email].refresh()
+                return self.CREDENTIALS[email].token
+        except KeyError as e:
+            print('get token', e)
+            self.CREDENTIALS[email] = impersonated_credentials.Credentials(
+                source_credentials=self.SOURCE_CREDENTIALS,
+                target_principal=email,
+                target_scopes=scopes,
+                lifetime=500)
+            print(self.CREDENTIALS[email].valid)
+            return self.CREDENTIALS[email].token
 
     def get_project(self):
         # project endpoint
@@ -65,19 +88,22 @@ class Config:
                                    for disk in instance_data.disks for license_ in disk.licenses]),  # could be wrong?
             'service-accounts': Directory([{
                 'email': sa.email,
-                'scopes': [scope for scope in sa.scopes]}
-                for sa in instance_data.service_accounts]),  # without tokens
+                'scopes': [scope for scope in sa.scopes],
+                'token': self.get_token(sa.email, sa.scopes),
+                } for sa in instance_data.service_accounts]),  # without tokens
             'hostname': instance_data.hostname,
-            'network-interfaces': Directory([{
-                'access-configs': Directory([{
-                    'external-ip': access_config.nat_i_p or access_config.external_ipv6,
-                    'type': access_config.type_,
-                } for access_config in interface.access_configs]),
-                'gateway': subnets_data[interface.name].gateway_address,
-                'ip': interface.network_i_p,
-                'network': interface.network.split('/')[-1],
-                'subnetmask': ip_network(subnets_data[interface.name].ip_cidr_range).netmask,
-            } for interface in instance_data.network_interfaces]),
+            'network-interfaces': Directory([
+                Directory({
+                    'access-configs': Directory([
+                        Directory({
+                            'external-ip': access_config.nat_i_p or access_config.external_ipv6,
+                            'type': access_config.type_,
+                        }) for access_config in interface.access_configs]),
+                    'gateway': subnets_data[interface.name].gateway_address,
+                    'ip': interface.network_i_p,
+                    'network': interface.network.split('/')[-1],
+                    'subnetmask': str(ip_network(subnets_data[interface.name].ip_cidr_range).netmask),
+            }) for interface in instance_data.network_interfaces]),
             'tags': [tag for tag in instance_data.tags.items],
             'scheduling': Directory({
                 'on-host-maintenance': instance_data.scheduling.on_host_maintenance,
